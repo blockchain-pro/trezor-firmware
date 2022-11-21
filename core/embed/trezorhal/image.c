@@ -50,9 +50,8 @@ static secbool compute_pubkey(uint8_t sig_m, uint8_t sig_n,
   return sectrue * (0 == ed25519_cosi_combine_publickeys(res, keys, sig_m));
 }
 
-secbool load_image_header(const uint8_t *const data, const uint32_t magic,
-                          const uint32_t maxsize, uint8_t key_m, uint8_t key_n,
-                          const uint8_t *const *keys, image_header *const hdr) {
+secbool parse_image_header(const uint8_t *const data, const uint32_t magic,
+                           const uint32_t maxsize, image_header *const hdr) {
   memcpy(&hdr->magic, data, 4);
   if (hdr->magic != magic) return secfalse;
 
@@ -60,25 +59,62 @@ secbool load_image_header(const uint8_t *const data, const uint32_t magic,
   if (hdr->hdrlen != IMAGE_HEADER_SIZE) return secfalse;
 
   memcpy(&hdr->expiry, data + 8, 4);
+  memcpy(&hdr->codelen, data + 12, 4);
+  memcpy(&hdr->version, data + 16, 4);
+  memcpy(&hdr->fix_version, data + 20, 4);
+  memcpy(&hdr->monotonic, data + 24, 1);
+  memcpy(&hdr->hw_model, data + 25, 1);
+  memcpy(&hdr->hw_revision, data + 26, 1);
+  memcpy(hdr->hashes, data + 32, 512);
+  memcpy(&hdr->sigmask, data + IMAGE_HEADER_SIZE - IMAGE_SIG_SIZE, 1);
+  memcpy(hdr->sig, data + IMAGE_HEADER_SIZE - IMAGE_SIG_SIZE + 1,
+         IMAGE_SIG_SIZE - 1);
+
   // TODO: expiry mechanism needs to be ironed out before production or those
   // devices won't accept expiring bootloaders (due to boardloader write
   // protection).
-  if (hdr->expiry != 0) return secfalse;
+  if ((hdr->expiry & 0xFFFFFFFE) != 0) return secfalse;
 
-  memcpy(&hdr->codelen, data + 12, 4);
+  // abusing expiry field to implement model check
+  if ((hdr->expiry & 0x1) == 0) {
+    // expiry bit0 = 0 means model T image
+#ifndef TREZOR_MODEL_T
+    return secfalse;
+#else
+    // look for model information in the image header, allow zeros for pre-check
+    // images
+    if (hdr->hw_model != HW_MODEL && hdr->hw_model != 0) {
+      return secfalse;
+    }
+    if (hdr->hw_revision != HW_REVISION && hdr->hw_revision != 0) {
+      return secfalse;
+    }
+#endif
+  } else {
+    // expiry bit0 = 1 means look for model information in the image header
+    if (hdr->hw_model != HW_MODEL) {
+      return secfalse;
+    }
+    if (hdr->hw_revision != HW_REVISION) {
+      return secfalse;
+    }
+  }
+
   if (hdr->codelen > (maxsize - hdr->hdrlen)) return secfalse;
   if ((hdr->hdrlen + hdr->codelen) < 4 * 1024) return secfalse;
   if ((hdr->hdrlen + hdr->codelen) % 512 != 0) return secfalse;
 
-  memcpy(&hdr->version, data + 16, 4);
-  memcpy(&hdr->fix_version, data + 20, 4);
+  return sectrue;
+}
 
-  memcpy(hdr->hashes, data + 32, 512);
+secbool load_image_header(const uint8_t *const data, const uint32_t magic,
+                          const uint32_t maxsize, uint8_t key_m, uint8_t key_n,
+                          const uint8_t *const *keys, image_header *const hdr) {
+  secbool res = parse_image_header(data, magic, maxsize, hdr);
 
-  memcpy(&hdr->sigmask, data + IMAGE_HEADER_SIZE - IMAGE_SIG_SIZE, 1);
-
-  memcpy(hdr->sig, data + IMAGE_HEADER_SIZE - IMAGE_SIG_SIZE + 1,
-         IMAGE_SIG_SIZE - 1);
+  if (res != sectrue) {
+    return res;
+  }
 
   // check header signature
 

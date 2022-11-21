@@ -45,7 +45,10 @@ typedef struct {
   uint32_t codelen;
   uint32_t version;
   uint32_t fix_version;
-  // uint8_t reserved[8];
+  uint8_t monotonic;
+  uint8_t hw_model;
+  uint8_t hw_revision;
+  // uint8_t reserved[5];
   uint8_t hashes[512];
   // uint8_t reserved[415];
   uint8_t sigmask;
@@ -77,6 +80,10 @@ typedef struct {
   uint8_t sigmask;
   uint8_t sig[64];
 } vendor_header;
+
+secbool __wur parse_image_header(const uint8_t *const data,
+                                 const uint32_t magic, const uint32_t maxsize,
+                                 image_header *const hdr);
 
 secbool __wur load_image_header(const uint8_t *const data, const uint32_t magic,
                                 const uint32_t maxsize, uint8_t key_m,

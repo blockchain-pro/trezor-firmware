@@ -20,8 +20,10 @@
 #include <stdint.h>
 #include <string.h>
 #include "blake2s.h"
+#include "board_capabilities.h"
 #include "common.h"
 #include "flash.h"
+#include "image.h"
 
 // symbols from bootloader.bin => bootloader.o
 extern const uint32_t _binary_embed_firmware_bootloader_bin_start;
@@ -97,6 +99,50 @@ void check_and_replace_bootloader(void) {
       (const uint32_t *)&_binary_embed_firmware_bootloader_bin_start;
   const uint32_t len =
       (const uint32_t)&_binary_embed_firmware_bootloader_bin_size;
+
+  image_header new_bld_hdr;
+  secbool new_header_valid =
+      parse_image_header((uint8_t *)data, BOOTLOADER_IMAGE_MAGIC,
+                         BOOTLOADER_IMAGE_MAXSIZE, &new_bld_hdr);
+
+  if (new_header_valid != sectrue) {
+    // invalid bootloader header
+    // could also mean that the embedded bootloader is for another model
+    return;
+  }
+
+  image_header current_bld_hdr;
+  secbool old_header_valid =
+      parse_image_header(bl_data, BOOTLOADER_IMAGE_MAGIC,
+                         BOOTLOADER_IMAGE_MAXSIZE, &current_bld_hdr);
+
+  (void)old_header_valid;
+
+  if (new_bld_hdr.monotonic < current_bld_hdr.monotonic) {
+    // reject downgrade
+    return;
+  }
+
+  const char *board_name = (const char *)get_board_name();
+  size_t board_name_len = strlen(board_name);
+  if ((board_name_len == 0) ||
+      strncmp("TREZORT", board_name, board_name_len) == 0) {
+    // no board capabilities, assume Model T
+    if ((new_bld_hdr.hw_model != 'T') && (new_bld_hdr.hw_model != 0)) {
+      // reject non-model T bootloader
+      // 0 represents pre-model check bootloader
+      return;
+    }
+  } else if (strncmp("TREZORR", board_name, board_name_len) == 0) {
+    if (new_bld_hdr.hw_model != 'R') {
+      // reject non-model R bootloader
+      return;
+    }
+  } else {
+    // reject unknown bootloader
+    return;
+  }
+
   ensure(flash_erase(FLASH_SECTOR_BOOTLOADER), NULL);
   ensure(flash_unlock_write(), NULL);
   for (int i = 0; i < len / sizeof(uint32_t); i++) {

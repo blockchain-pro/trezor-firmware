@@ -15,10 +15,13 @@ def configure_board(model, env, defines, sources):
     if model in ('1',):
         board = 'trezor_1.h'
         display = 'vg-2864ksweg01.c'
+        hw_revision = 0
     elif model in ('T',):
         board = 'trezor_t.h'
         display = 'st7789v.c'
+        hw_revision = 0
     elif model in ('R',):
+        hw_revision = model_r_version
         if model_r_version == 3:
             board = 'trezor_r_v3.h'
             display = "vg-2828tswig01.c"
@@ -29,5 +32,7 @@ def configure_board(model, env, defines, sources):
         raise Exception("Unknown model")
 
     defines += [f'TREZOR_BOARD=\\"boards/{board}\\"', ]
+    defines += [f'HW_MODEL=\\\'{model}\\\'', ]
+    defines += [f'HW_REVISION={hw_revision}', ]
     sources += [f'embed/trezorhal/displays/{display}', ]
     env.get('ENV')['TREZOR_BOARD'] = board
