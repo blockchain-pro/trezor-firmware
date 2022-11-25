@@ -100,25 +100,23 @@ void check_and_replace_bootloader(void) {
   const uint32_t len =
       (const uint32_t)&_binary_embed_firmware_bootloader_bin_size;
 
-  image_header new_bld_hdr;
-  secbool new_header_valid =
-      parse_image_header((uint8_t *)data, BOOTLOADER_IMAGE_MAGIC,
-                         BOOTLOADER_IMAGE_MAXSIZE, &new_bld_hdr);
+  const image_header *new_bld_hdr = read_image_header(
+      (uint8_t *)data, BOOTLOADER_IMAGE_MAGIC, BOOTLOADER_IMAGE_MAXSIZE);
 
-  if (new_header_valid != sectrue) {
-    // invalid bootloader header
-    // could also mean that the embedded bootloader is for another model
-    return;
-  }
+  ensure(new_bld_hdr != NULL ? sectrue : secfalse, "Invalid embedded bootloader");
 
-  image_header current_bld_hdr;
-  secbool old_header_valid =
-      parse_image_header(bl_data, BOOTLOADER_IMAGE_MAGIC,
-                         BOOTLOADER_IMAGE_MAXSIZE, &current_bld_hdr);
+  ensure(check_image_model(new_bld_hdr), "Incompatible embedded bootloader");
 
-  (void)old_header_valid;
 
-  if (new_bld_hdr.monotonic < current_bld_hdr.monotonic) {
+  const image_header *current_bld_hdr = read_image_header(
+      bl_data, BOOTLOADER_IMAGE_MAGIC, BOOTLOADER_IMAGE_MAXSIZE);
+
+  // cannot find valid header for current bootloader, something is wrong
+  ensure(current_bld_hdr != NULL ? sectrue : secfalse, "Invalid bootloader header");
+
+  ensure(check_image_model(new_bld_hdr), "Incompatible bootloader found");
+
+  if (new_bld_hdr->monotonic < current_bld_hdr->monotonic) {
     // reject downgrade
     return;
   }
@@ -128,13 +126,13 @@ void check_and_replace_bootloader(void) {
   if ((board_name_len == 0) ||
       strncmp("TREZORT", board_name, board_name_len) == 0) {
     // no board capabilities, assume Model T
-    if ((new_bld_hdr.hw_model != 'T') && (new_bld_hdr.hw_model != 0)) {
+    if ((new_bld_hdr->hw_model != 'T') && (new_bld_hdr->hw_model != 0)) {
       // reject non-model T bootloader
       // 0 represents pre-model check bootloader
       return;
     }
   } else if (strncmp("TREZORR", board_name, board_name_len) == 0) {
-    if (new_bld_hdr.hw_model != 'R') {
+    if (new_bld_hdr->hw_model != 'R') {
       // reject non-model R bootloader
       return;
     }

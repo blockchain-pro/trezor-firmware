@@ -93,17 +93,29 @@ static uint32_t check_sdcard(void) {
 
   sdcard_power_off();
 
-  image_header hdr;
+  if (sectrue == read_status) {
+    const image_header *hdr =
+        read_image_header((const uint8_t *)sdcard_buf, BOOTLOADER_IMAGE_MAGIC,
+                          BOOTLOADER_IMAGE_MAXSIZE);
 
-  if ((sectrue == read_status) &&
-      (sectrue ==
-       load_image_header((const uint8_t *)sdcard_buf, BOOTLOADER_IMAGE_MAGIC,
-                         BOOTLOADER_IMAGE_MAXSIZE, BOARDLOADER_KEY_M,
-                         BOARDLOADER_KEY_N, BOARDLOADER_KEYS, &hdr))) {
-    return hdr.codelen;
-  } else {
-    return 0;
+    if (hdr == NULL) {
+      return 0;
+    }
+
+    if (sectrue != check_image_model(hdr)) {
+      return 0;
+    }
+
+    if (sectrue != check_image_header_sig(hdr, BOARDLOADER_KEY_M,
+                                          BOARDLOADER_KEY_N,
+                                          BOARDLOADER_KEYS)) {
+      return 0;
+    }
+
+    return hdr->codelen;
   }
+
+  return 0;
 }
 
 static void progress_callback(int pos, int len) { display_printf("."); }
@@ -229,18 +241,20 @@ int main(void) {
   }
 #endif
 
-  image_header hdr;
+  const image_header *hdr =
+      read_image_header((const uint8_t *)BOOTLOADER_START,
+                        BOOTLOADER_IMAGE_MAGIC, BOOTLOADER_IMAGE_MAXSIZE);
 
-  ensure(load_image_header((const uint8_t *)BOOTLOADER_START,
-                           BOOTLOADER_IMAGE_MAGIC, BOOTLOADER_IMAGE_MAXSIZE,
-                           BOARDLOADER_KEY_M, BOARDLOADER_KEY_N,
-                           BOARDLOADER_KEYS, &hdr),
-         "invalid bootloader header");
+  ensure(hdr != NULL ? sectrue : secfalse, "invalid bootloader header");
+
+  ensure(check_image_header_sig(hdr, BOARDLOADER_KEY_M, BOARDLOADER_KEY_N,
+                                BOARDLOADER_KEYS),
+         "invalid bootloader signature");
 
   const uint8_t sectors[] = {
       FLASH_SECTOR_BOOTLOADER,
   };
-  ensure(check_image_contents(&hdr, IMAGE_HEADER_SIZE, sectors, 1),
+  ensure(check_image_contents(hdr, IMAGE_HEADER_SIZE, sectors, 1),
          "invalid bootloader hash");
 
   set_bld_compatible_settings();
