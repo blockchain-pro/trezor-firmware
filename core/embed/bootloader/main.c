@@ -158,7 +158,7 @@ static secbool bootloader_usb_loop(const vendor_header *const vhdr,
         break;
       case 7:  // FirmwareUpload
         r = process_msg_FirmwareUpload(USB_IFACE_NUM, msg_size, buf);
-        if (r < 0 && r != -4) {  // error, but not user abort (-4)
+        if (r < 0 && r != UPLOAD_ERR_USER_ABORT) {  // error, but not user abort
           ui_fadeout();
           ui_screen_fail();
           ui_fadein();
