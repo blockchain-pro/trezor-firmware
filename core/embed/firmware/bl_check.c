@@ -103,16 +103,17 @@ void check_and_replace_bootloader(void) {
   const image_header *new_bld_hdr = read_image_header(
       (uint8_t *)data, BOOTLOADER_IMAGE_MAGIC, BOOTLOADER_IMAGE_MAXSIZE);
 
-  ensure(new_bld_hdr != NULL ? sectrue : secfalse, "Invalid embedded bootloader");
+  ensure(new_bld_hdr != NULL ? sectrue : secfalse,
+         "Invalid embedded bootloader");
 
   ensure(check_image_model(new_bld_hdr), "Incompatible embedded bootloader");
-
 
   const image_header *current_bld_hdr = read_image_header(
       bl_data, BOOTLOADER_IMAGE_MAGIC, BOOTLOADER_IMAGE_MAXSIZE);
 
   // cannot find valid header for current bootloader, something is wrong
-  ensure(current_bld_hdr != NULL ? sectrue : secfalse, "Invalid bootloader header");
+  ensure(current_bld_hdr != NULL ? sectrue : secfalse,
+         "Invalid bootloader header");
 
   ensure(check_image_model(new_bld_hdr), "Incompatible bootloader found");
 
@@ -129,16 +130,16 @@ void check_and_replace_bootloader(void) {
     if ((new_bld_hdr->hw_model != 'T') && (new_bld_hdr->hw_model != 0)) {
       // reject non-model T bootloader
       // 0 represents pre-model check bootloader
-      return;
+      ensure(secfalse, "Incompatible embedded bootloader");
     }
   } else if (strncmp("TREZORR", board_name, board_name_len) == 0) {
     if (new_bld_hdr->hw_model != 'R') {
       // reject non-model R bootloader
-      return;
+      ensure(secfalse, "Incompatible embedded bootloader");
     }
   } else {
     // reject unknown bootloader
-    return;
+    ensure(secfalse, "Unknown embedded bootloader");
   }
 
   ensure(flash_erase(FLASH_SECTOR_BOOTLOADER), NULL);

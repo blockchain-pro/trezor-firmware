@@ -69,6 +69,7 @@ const image_header *read_image_header(const uint8_t *const data,
   // and non TT images
   //  which is evaluated in check_image_model function
   if ((hdr->expiry & 0xFFFFFFFE) != 0) return secfalse;
+
   if (hdr->codelen > (maxsize - hdr->hdrlen)) return secfalse;
   if ((hdr->hdrlen + hdr->codelen) < 4 * 1024) return secfalse;
   if ((hdr->hdrlen + hdr->codelen) % 512 != 0) return secfalse;
@@ -79,28 +80,24 @@ const image_header *read_image_header(const uint8_t *const data,
 secbool check_image_model(const image_header *const hdr) {
   // abusing expiry field to break compatibility of non-TT images with existing
   // bootloaders/boardloaders
-  if ((hdr->expiry & 0x1) == 0) {
-    // expiry bit0 = 0 means model T image
-#ifndef TREZOR_MODEL_T
-    return secfalse;
+#ifdef TREZOR_MODEL_T
+  if (hdr->expiry == 0 && hdr->hw_model == 0 && hdr->hw_revision == 0) {
+    // images for model TT older than this check
+    return sectrue;
+  }
 #else
-    // look for model information in the image header, allow zeros for pre-check
-    // images
-    if (hdr->hw_model != HW_MODEL && hdr->hw_model != 0) {
-      return secfalse;
-    }
-    if (hdr->hw_revision != HW_REVISION && hdr->hw_revision != 0) {
-      return secfalse;
-    }
+  if ((hdr->expiry & 0x01) == 0) {
+    // for models other than TT, expiry == 0 is unacceptable, as the image will
+    // run on bootloaders older that this check
+    return secfalse;
+  }
 #endif
-  } else {
-    // expiry bit0 = 1 means look for model information in the image header
-    if (hdr->hw_model != HW_MODEL) {
-      return secfalse;
-    }
-    if (hdr->hw_revision != HW_REVISION) {
-      return secfalse;
-    }
+
+  if (hdr->hw_model != HW_MODEL) {
+    return secfalse;
+  }
+  if (hdr->hw_revision != HW_REVISION) {
+    return secfalse;
   }
 
   return sectrue;
