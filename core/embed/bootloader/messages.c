@@ -504,7 +504,8 @@ int process_msg_FirmwareUpload(uint8_t iface_num, uint32_t msg_size,
           read_image_header(CHUNK_BUFFER_PTR + vhdr.hdrlen,
                             FIRMWARE_IMAGE_MAGIC, FIRMWARE_IMAGE_MAXSIZE);
 
-      if (received_hdr == NULL) {
+      if (received_hdr !=
+          (const image_header *)(CHUNK_BUFFER_PTR + vhdr.hdrlen)) {
         MSG_SEND_INIT(Failure);
         MSG_SEND_ASSIGN_VALUE(code, FailureType_Failure_ProcessError);
         MSG_SEND_ASSIGN_STRING(message, "Invalid firmware header");
@@ -547,7 +548,8 @@ int process_msg_FirmwareUpload(uint8_t iface_num, uint32_t msg_size,
             (const uint8_t *)FIRMWARE_START + current_vhdr.hdrlen,
             FIRMWARE_IMAGE_MAGIC, FIRMWARE_IMAGE_MAXSIZE);
 
-        if (current_hdr == NULL) {
+        if (current_hdr !=
+            (const image_header *)FIRMWARE_START + current_vhdr.hdrlen) {
           is_new = sectrue;
         }
       }

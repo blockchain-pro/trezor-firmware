@@ -319,7 +319,7 @@ int main(void) {
   if (sectrue == firmware_present) {
     hdr = read_image_header((const uint8_t *)(FIRMWARE_START + vhdr.hdrlen),
                             FIRMWARE_IMAGE_MAGIC, FIRMWARE_IMAGE_MAXSIZE);
-    if (hdr == NULL) {
+    if (hdr != (const image_header *)(FIRMWARE_START + vhdr.hdrlen)) {
       firmware_present = secfalse;
     }
   }
@@ -389,7 +389,9 @@ int main(void) {
   hdr = read_image_header((const uint8_t *)(FIRMWARE_START + vhdr.hdrlen),
                           FIRMWARE_IMAGE_MAGIC, FIRMWARE_IMAGE_MAXSIZE);
 
-  ensure(hdr != NULL ? sectrue : secfalse, "invalid firmware header");
+  ensure(hdr == (const image_header *)(FIRMWARE_START + vhdr.hdrlen) ? sectrue
+                                                                     : secfalse,
+         "invalid firmware header");
 
   ensure(check_image_model(hdr), "wrong firmware model");
 

@@ -98,7 +98,7 @@ static uint32_t check_sdcard(void) {
         read_image_header((const uint8_t *)sdcard_buf, BOOTLOADER_IMAGE_MAGIC,
                           BOOTLOADER_IMAGE_MAXSIZE);
 
-    if (hdr == NULL) {
+    if (hdr != (const image_header *)sdcard_buf) {
       return 0;
     }
 
@@ -245,7 +245,8 @@ int main(void) {
       read_image_header((const uint8_t *)BOOTLOADER_START,
                         BOOTLOADER_IMAGE_MAGIC, BOOTLOADER_IMAGE_MAXSIZE);
 
-  ensure(hdr != NULL ? sectrue : secfalse, "invalid bootloader header");
+  ensure(hdr == (const image_header *)BOOTLOADER_START ? sectrue : secfalse,
+         "invalid bootloader header");
 
   ensure(check_image_header_sig(hdr, BOARDLOADER_KEY_M, BOARDLOADER_KEY_N,
                                 BOARDLOADER_KEYS),
