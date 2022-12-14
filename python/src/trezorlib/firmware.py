@@ -192,10 +192,10 @@ FirmwareHeader = c.Struct(
     ),
     "version" / VersionLong,
     "fix_version" / VersionLong,
-    "monotonic" / c.Byte,
-    "hw_model" / c.Byte,
+    "hw_model" / c.Bytes(4),
     "hw_revision" / c.Byte,
-    "_reserved" / c.Padding(5),
+    "monotonic" / c.Byte,
+    "_reserved" / c.Padding(2),
     "hashes" / c.Bytes(32)[16],
 
     "v1_signatures" / c.Bytes(64)[V1_SIGNATURE_SLOTS],

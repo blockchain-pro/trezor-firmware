@@ -45,10 +45,10 @@ typedef struct {
   uint32_t codelen;
   uint32_t version;
   uint32_t fix_version;
-  uint8_t monotonic;
-  uint8_t hw_model;
+  uint32_t hw_model;
   uint8_t hw_revision;
-  uint8_t reserved_0[5];
+  uint8_t monotonic;
+  uint8_t reserved_0[2];
   uint8_t hashes[512];
   uint8_t reserved_1[415];
   uint8_t sigmask;

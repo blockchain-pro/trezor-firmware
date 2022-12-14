@@ -26,8 +26,8 @@
 #include "image.h"
 
 // symbols from bootloader.bin => bootloader.o
-extern const uint32_t _binary_embed_firmware_bootloader_bin_start;
-extern const uint32_t _binary_embed_firmware_bootloader_bin_size;
+extern const void _binary_embed_firmware_bootloader_bin_start;
+extern const void _binary_embed_firmware_bootloader_bin_size;
 
 /*
 static secbool known_bootloader(const uint8_t *hash, int len) {
@@ -95,8 +95,7 @@ void check_and_replace_bootloader(void) {
   }
 
   // replace bootloader with the latest one
-  const uint32_t *data =
-      (const uint32_t *)&_binary_embed_firmware_bootloader_bin_start;
+  const void *data = (const void *)&_binary_embed_firmware_bootloader_bin_start;
   const uint32_t len =
       (const uint32_t)&_binary_embed_firmware_bootloader_bin_size;
 
@@ -115,31 +114,30 @@ void check_and_replace_bootloader(void) {
   ensure(current_bld_hdr == (const image_header *)bl_data ? sectrue : secfalse,
          "Invalid bootloader header");
 
-  ensure(check_image_model(new_bld_hdr), "Incompatible bootloader found");
+  ensure(check_image_model(current_bld_hdr), "Incompatible bootloader found");
 
   if (new_bld_hdr->monotonic < current_bld_hdr->monotonic) {
     // reject downgrade
     return;
   }
 
-  const char *board_name = (const char *)get_board_name();
-  size_t board_name_len = strlen(board_name);
-  if ((board_name_len == 0) ||
-      strncmp("TREZORT", board_name, board_name_len) == 0) {
+  uint32_t board_name = get_board_name();
+  if (board_name == 0 || strncmp((const char *)&board_name, "T2T1", 4) == 0) {
     // no board capabilities, assume Model T
-    if ((new_bld_hdr->hw_model != 'T') && (new_bld_hdr->hw_model != 0)) {
+    if ((strncmp((const char *)&new_bld_hdr->hw_model, "T2T1", 4) != 0) &&
+        (new_bld_hdr->hw_model != 0)) {
       // reject non-model T bootloader
       // 0 represents pre-model check bootloader
       ensure(secfalse, "Incompatible embedded bootloader");
     }
-  } else if (strncmp("TREZORR", board_name, board_name_len) == 0) {
-    if (new_bld_hdr->hw_model != 'R') {
-      // reject non-model R bootloader
-      ensure(secfalse, "Incompatible embedded bootloader");
-    }
-  } else {
-    // reject unknown bootloader
-    ensure(secfalse, "Unknown embedded bootloader");
+  }
+  // at this point, due to the previous check_image_model call, we know that the
+  // new_bld_hdr is
+  //  meant for the same model as this firmware, so we can check the board name
+  //  against the firmware hw_model.
+  else if (board_name != HW_MODEL) {
+    // reject incompatible bootloader
+    ensure(secfalse, "Incompatible embedded bootloader");
   }
 
   ensure(flash_erase(FLASH_SECTOR_BOOTLOADER), NULL);

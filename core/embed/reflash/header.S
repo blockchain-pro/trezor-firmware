@@ -24,10 +24,10 @@ g_header:
     .byte FIX_VERSION_MINOR          // fix_vminor
     .byte FIX_VERSION_PATCH          // fix_vpatch
     .byte FIX_VERSION_BUILD          // fix_vbuild
-    .byte VERSION_MONOTONIC          // monotonic version
-    .byte HW_MODEL                   // type of the designated hardware
+    .word HW_MODEL                   // type of the designated hardware
     .byte HW_REVISION                // revision of the designated hardware
-    . = . + 5                        // reserved
+    .byte VERSION_MONOTONIC          // monotonic version
+    . = . + 2                        // reserved
     . = . + 512                      // hash1 ... hash16
     . = . + 415                      // reserved
     .byte 0                          // sigmask

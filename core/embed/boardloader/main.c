@@ -53,14 +53,8 @@ struct BoardCapabilities capablities
     __attribute__((section(".capabilities_section"))) = {
         .header = CAPABILITIES_HEADER,
         .model_tag = MODEL_NAME,
-        .model_length = MODEL_NAME_MAX_LENGTH,
-#if defined TREZOR_MODEL_T
-        .model_name = "TREZORT",
-#elif defined TREZOR_MODEL_R
-        .model_name = "TREZORR",
-#else
-#error Unknown model
-#endif
+        .model_length = sizeof(uint32_t),
+        .model_name = HW_MODEL,
         .version_tag = BOARDLOADER_VERSION,
         .version_length = sizeof(struct BoardloaderVersion),
         .version = {.version_major = VERSION_MAJOR,
