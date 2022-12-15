@@ -44,7 +44,10 @@ typedef struct {
   uint32_t codelen;
   uint32_t version;
   uint32_t fix_version;
-  uint8_t __reserved1[8];
+  uint32_t hw_model;
+  uint8_t hw_revision;
+  uint8_t monotonic;
+  uint8_t __reserved1[2];
   uint8_t hashes[512];
   uint8_t sig1[64];
   uint8_t sig2[64];
@@ -63,6 +66,7 @@ bool firmware_present_new(void);
 void compute_firmware_fingerprint(const image_header *hdr, uint8_t hash[32]);
 int signatures_new_ok(const image_header *hdr, uint8_t store_fingerprint[32]);
 int check_firmware_hashes(const image_header *hdr);
+bool check_image_model(const image_header *hdr);
 
 int mem_is_empty(const uint8_t *src, uint32_t len);
 

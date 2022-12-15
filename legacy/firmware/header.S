@@ -10,7 +10,7 @@
 g_header:
     .byte 'T','R','Z','F'            // magic
     .word reset_handler              // reset handler,  replace later with : .word g_header_end - g_header    // hdrlen
-    .word 0                          // expiry
+    .word 1                          // expiry, set to 1 to break compatibility with old model T bootloaders
     .word _codelen                   // codelen
     .byte VERSION_MAJOR              // vmajor
     .byte VERSION_MINOR              // vminor
@@ -20,7 +20,10 @@ g_header:
     .byte FIX_VERSION_MINOR          // fix_vminor
     .byte FIX_VERSION_PATCH          // fix_vpatch
     .byte 0                          // fix_vbuild
-    . = . + 8                        // reserved
+    .word HW_MODEL                   // type of the designated hardware
+    .byte HW_REVISION                // revision of the designated hardware
+    .byte 0                          // monotonic version placeholder - not used in legacy
+    . = . + 2                        // reserved
     . = . + 512                      // hash1 ... hash16
     . = . + 64                       // sig1
     . = . + 64                       // sig2
