@@ -339,13 +339,6 @@ static void rx_callback(usbd_device *dev, uint8_t ep) {
         show_halt("Wrong firmware", "header.");
         return;
       }
-      // check firmware model
-      if (!check_image_model((const image_header *)p)) {
-        send_msg_failure(dev, 9);  // Failure_ProcessError
-        flash_state = STATE_END;
-        show_halt("Wrong firmware", "model.");
-        return;
-      }
       memzero(FW_HEADER, sizeof(FW_HEADER));
       memzero(FW_CHUNK, sizeof(FW_CHUNK));
       flash_state = STATE_FLASHING;

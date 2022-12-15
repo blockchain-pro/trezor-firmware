@@ -10,7 +10,7 @@
 g_header:
     .byte 'T','R','Z','F'            // magic
     .word reset_handler              // reset handler,  replace later with : .word g_header_end - g_header    // hdrlen
-    .word 1                          // expiry, set to 1 to break compatibility with old model T bootloaders
+    .word 0                          // expiry
     .word _codelen                   // codelen
     .byte VERSION_MAJOR              // vmajor
     .byte VERSION_MINOR              // vminor

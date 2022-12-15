@@ -120,16 +120,6 @@ void compute_firmware_fingerprint(const image_header *hdr, uint8_t hash[32]) {
   sha256_Raw((const uint8_t *)&copy, sizeof(image_header), hash);
 }
 
-bool check_image_model(const image_header *hdr) {
-  if (hdr->hw_model != 0 || hdr->hw_revision != 0) {
-    // model information is provided, check compatibility
-    // when no information is provided, assume model 1
-    if (hdr->hw_model != HW_MODEL) return false;
-    if (hdr->hw_revision != HW_REVISION) return false;
-  }
-  return true;
-}
-
 bool firmware_present_new(void) {
   const image_header *hdr =
       (const image_header *)FLASH_PTR(FLASH_FWHEADER_START);
@@ -142,7 +132,7 @@ bool firmware_present_new(void) {
   if (hdr->codelen > FLASH_APP_LEN) return false;
   if (hdr->codelen < 4096) return false;
 
-  return check_image_model(hdr);
+  return true;
 }
 
 int signatures_new_ok(const image_header *hdr, uint8_t store_fingerprint[32]) {
