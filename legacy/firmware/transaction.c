@@ -413,6 +413,20 @@ int compile_output(const CoinInfo *coin, AmountUnit amount_unit,
   return out->script_pubkey.size;
 }
 
+int get_script_pubkey(const CoinInfo *coin, HDNode *node, bool has_multisig,
+                      const MultisigRedeemScriptType *multisig,
+                      InputScriptType script_type, uint8_t *script_pubkey,
+                      pb_size_t *script_pubkey_size) {
+  char address[MAX_ADDR_SIZE] = {0};
+  bool res = true;
+  res = res && (hdnode_fill_public_key(node) == 0);
+  res = res && compute_address(coin, script_type, node, has_multisig, multisig,
+                               address);
+  res = res && address_to_script_pubkey(coin, address, script_pubkey,
+                                        script_pubkey_size);
+  return res;
+}
+
 int fill_input_script_pubkey(const CoinInfo *coin, const HDNode *root,
                              TxInputType *in) {
   if (in->script_type == InputScriptType_EXTERNAL) {
@@ -422,16 +436,13 @@ int fill_input_script_pubkey(const CoinInfo *coin, const HDNode *root,
 
   static CONFIDENTIAL HDNode node;
   memcpy(&node, root, sizeof(HDNode));
-  char address[MAX_ADDR_SIZE] = {0};
-  bool res = true;
+  int res = true;
   res = res && hdnode_private_ckd_cached(&node, in->address_n,
                                          in->address_n_count, NULL);
-  res = res && (hdnode_fill_public_key(&node) == 0);
-  res = res && compute_address(coin, in->script_type, &node, in->has_multisig,
-                               &in->multisig, address);
+  res = res && get_script_pubkey(coin, &node, in->has_multisig, &in->multisig,
+                                 in->script_type, in->script_pubkey.bytes,
+                                 &in->script_pubkey.size);
   memzero(&node, sizeof(node));
-  res = res && address_to_script_pubkey(coin, address, in->script_pubkey.bytes,
-                                        &in->script_pubkey.size);
   in->has_script_pubkey = res;
   return res;
 }

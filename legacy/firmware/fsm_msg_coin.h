@@ -183,6 +183,27 @@ bool fsm_checkCoinPath(const CoinInfo *coin, InputScriptType script_type,
   return true;
 }
 
+bool fsm_checkScriptType(const CoinInfo *coin, InputScriptType script_type) {
+  if (!is_internal_input_script_type(script_type)) {
+    fsm_sendFailure(FailureType_Failure_DataError, _("Invalid script type"));
+    return false;
+  }
+
+  if (is_segwit_input_script_type(script_type) && !coin->has_segwit) {
+    fsm_sendFailure(FailureType_Failure_DataError,
+                    _("Segwit not enabled on this coin"));
+    return false;
+  }
+
+  if (script_type == InputScriptType_SPENDTAPROOT && !coin->has_taproot) {
+    fsm_sendFailure(FailureType_Failure_DataError,
+                    _("Taproot not enabled on this coin"));
+    return false;
+  }
+
+  return true;
+}
+
 void fsm_msgGetAddress(const GetAddress *msg) {
   RESP_INIT(Address);
 
@@ -371,5 +392,205 @@ void fsm_msgVerifyMessage(const VerifyMessage *msg) {
   } else {
     fsm_sendFailure(FailureType_Failure_ProcessError, _("Invalid signature"));
   }
+  layoutHome();
+}
+
+bool fsm_getOwnershipId(uint8_t *script_pubkey, size_t script_pubkey_size,
+                        uint8_t ownership_id[32]) {
+  const char *OWNERSHIP_ID_KEY_PATH[] = {"SLIP-0019",
+                                         "Ownership identification key"};
+
+  uint8_t ownership_id_key[32] = {0};
+  if (!fsm_getSlip21Key(OWNERSHIP_ID_KEY_PATH, 2, ownership_id_key)) {
+    return false;
+  }
+
+  hmac_sha256(ownership_id_key, sizeof(ownership_id_key), script_pubkey,
+              script_pubkey_size, ownership_id);
+
+  return true;
+}
+
+void fsm_msgGetOwnershipId(const GetOwnershipId *msg) {
+  RESP_INIT(OwnershipId);
+
+  CHECK_INITIALIZED
+
+  CHECK_PIN
+
+  const CoinInfo *coin = fsm_getCoin(msg->has_coin_name, msg->coin_name);
+  if (!coin) return;
+
+  if (!fsm_checkCoinPath(coin, msg->script_type, msg->address_n_count,
+                         msg->address_n, msg->has_multisig, false)) {
+    layoutHome();
+    return;
+  }
+
+  if (!fsm_checkScriptType(coin, msg->script_type)) {
+    layoutHome();
+    return;
+  }
+
+  HDNode *node = fsm_getDerivedNode(coin->curve_name, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) return;
+
+  uint8_t script_pubkey[520] = {0};
+  pb_size_t script_pubkey_size = 0;
+  if (!get_script_pubkey(coin, node, msg->has_multisig, &msg->multisig,
+                         msg->script_type, script_pubkey,
+                         &script_pubkey_size)) {
+    fsm_sendFailure(FailureType_Failure_ProcessError,
+                    _("Failed to derive scriptPubKey"));
+    layoutHome();
+    return;
+  }
+
+  if (!fsm_getOwnershipId(script_pubkey, script_pubkey_size,
+                          resp->ownership_id.bytes)) {
+    return;
+  }
+
+  resp->ownership_id.size = 32;
+
+  msg_write(MessageType_MessageType_OwnershipId, resp);
+  layoutHome();
+}
+
+void fsm_msgGetOwnershipProof(const GetOwnershipProof *msg) {
+  RESP_INIT(OwnershipProof);
+
+  CHECK_INITIALIZED
+
+  CHECK_PIN
+
+  if (msg->has_multisig) {
+    // The legacy implementation currently only supports singlesig native segwit
+    // v0 and v1, the bare minimum for CoinJoin.
+    fsm_sendFailure(FailureType_Failure_DataError,
+                    _("Multisig not supported."));
+    layoutHome();
+    return;
+  }
+
+  const CoinInfo *coin = fsm_getCoin(msg->has_coin_name, msg->coin_name);
+  if (!coin) return;
+
+  if (!fsm_checkCoinPath(coin, msg->script_type, msg->address_n_count,
+                         msg->address_n, msg->has_multisig, false)) {
+    layoutHome();
+    return;
+  }
+
+  if (!fsm_checkScriptType(coin, msg->script_type)) {
+    layoutHome();
+    return;
+  }
+
+  HDNode *node = fsm_getDerivedNode(coin->curve_name, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) return;
+
+  uint8_t script_pubkey[520] = {0};
+  pb_size_t script_pubkey_size = 0;
+  if (!get_script_pubkey(coin, node, msg->has_multisig, &msg->multisig,
+                         msg->script_type, script_pubkey,
+                         &script_pubkey_size)) {
+    fsm_sendFailure(FailureType_Failure_ProcessError,
+                    _("Failed to derive scriptPubKey"));
+    layoutHome();
+    return;
+  }
+
+  uint8_t ownership_id[32] = {0};
+  if (!fsm_getOwnershipId(script_pubkey, script_pubkey_size, ownership_id)) {
+    return;
+  }
+
+  // Providing an ownership ID is optional in case of singlesig, but if one is
+  // provided, then it should match.
+  if (msg->ownership_ids_count) {
+    if (msg->ownership_ids_count != 1 ||
+        msg->ownership_ids[0].size != sizeof(ownership_id) ||
+        memcmp(ownership_id, msg->ownership_ids[0].bytes,
+               sizeof(ownership_id) != 0)) {
+      fsm_sendFailure(FailureType_Failure_DataError,
+                      _("Invalid ownership identifier"));
+      layoutHome();
+      return;
+    }
+  }
+
+  // In order to set the "user confirmation" bit in the proof, the user must
+  // actually confirm.
+  uint8_t flags = 0;
+  if (msg->user_confirmation) {
+    flags |= 1;
+    layoutConfirmOwnershipProof();
+    if (!protectButton(ButtonRequestType_ButtonRequest_ProtectCall, false)) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+      layoutHome();
+      return;
+    }
+
+    if (msg->has_commitment_data) {
+      if (!fsm_layoutCommitmentData(msg->commitment_data.bytes,
+                                    msg->commitment_data.size)) {
+        fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+        layoutHome();
+        return;
+      }
+    }
+  }
+
+  size_t r = 0;
+  memcpy(resp->ownership_proof.bytes + r, "SL\x00\x19", 4);
+  r += 4;
+  resp->ownership_proof.bytes[r] = flags;
+  r += 1;
+  r += ser_length(1, resp->ownership_proof.bytes + r);
+  memcpy(resp->ownership_proof.bytes + r, ownership_id, sizeof(ownership_id));
+  r += sizeof(ownership_id);
+
+  Hasher hasher = {0};
+  hasher_InitParam(&hasher, HASHER_SHA2, NULL, 0);
+  hasher_Update(&hasher, resp->ownership_proof.bytes, r);
+  tx_script_hash(&hasher, script_pubkey_size, script_pubkey);
+  tx_script_hash(&hasher, msg->commitment_data.size,
+                 msg->commitment_data.bytes);
+  uint8_t digest[SHA256_DIGEST_LENGTH] = {0};
+  hasher_Final(&hasher, digest);
+
+  if (msg->script_type == InputScriptType_SPENDWITNESS) {
+    if (!tx_sign_ecdsa(coin->curve->params, node->private_key, digest,
+                       resp->signature.bytes, &resp->signature.size)) {
+      fsm_sendFailure(FailureType_Failure_ProcessError, _("Signing failed"));
+      layoutHome();
+      return;
+    }
+    r += ser_length(0, resp->ownership_proof.bytes + r);  // Empty scriptSig.
+    r += serialize_p2wpkh_witness(resp->signature.bytes, resp->signature.size,
+                                  node->public_key, 33, SIGHASH_ALL,
+                                  resp->ownership_proof.bytes + r);
+  } else if (msg->script_type == InputScriptType_SPENDTAPROOT) {
+    if (!tx_sign_bip340(node->private_key, digest, resp->signature.bytes,
+                        &resp->signature.size)) {
+      fsm_sendFailure(FailureType_Failure_ProcessError, _("Signing failed"));
+      layoutHome();
+      return;
+    }
+    r += ser_length(0, resp->ownership_proof.bytes + r);  // Empty scriptSig.
+    r += serialize_p2tr_witness(resp->signature.bytes, resp->signature.size, 0,
+                                resp->ownership_proof.bytes + r);
+  } else {
+    fsm_sendFailure(FailureType_Failure_DataError,
+                    _("Unsupported script type."));
+    layoutHome();
+    return;
+  }
+
+  resp->ownership_proof.size = r;
+  msg_write(MessageType_MessageType_OwnershipProof, resp);
   layoutHome();
 }
