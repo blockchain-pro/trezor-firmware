@@ -43,8 +43,6 @@ PIN = "1234"
 ROUND_ID_LEN = 32
 SLIP25_PATH = parse_path("m/10025h")
 
-pytestmark = pytest.mark.skip_t1
-
 
 @pytest.mark.setup_client(pin=PIN)
 def test_sign_tx(client: Client):
@@ -399,6 +397,7 @@ def test_sign_tx_large(client: Client):
     assert delay <= max_expected_delay
 
 
+@pytest.mark.skip_t1
 def test_sign_tx_spend(client: Client):
     # NOTE: FAKE input tx
 
@@ -553,6 +552,7 @@ def test_cancel_authorization(client: Client):
         )
 
 
+@pytest.mark.skip_t1
 def test_get_public_key(client: Client):
     ACCOUNT_PATH = parse_path("m/10025h/1h/0h/1h")
     EXPECTED_XPUB = "tpubDEMKm4M3S2Grx5DHTfbX9et5HQb9KhdjDCkUYdH9gvVofvPTE6yb2MH52P9uc4mx6eFohUmfN1f4hhHNK28GaZnWRXr3b8KkfFcySo1SmXU"
@@ -608,6 +608,7 @@ def test_get_public_key(client: Client):
         assert resp.xpub == EXPECTED_XPUB
 
 
+@pytest.mark.skip_t1
 def test_get_address(client: Client):
     # Ensure that the SLIP-0025 external chain is inaccessible without user confirmation.
     with pytest.raises(TrezorFailure, match="Forbidden key path"):

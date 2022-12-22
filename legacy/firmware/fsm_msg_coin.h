@@ -136,7 +136,16 @@ void fsm_msgSignTx(const SignTx *msg) {
   CHECK_PARAM(msg->inputs_count + msg->outputs_count >= msg->inputs_count,
               _("Value overflow"));
 
-  CHECK_PIN
+  const AuthorizeCoinJoin *authorization = NULL;
+  if (authorization_type == MessageType_MessageType_AuthorizeCoinJoin) {
+    authorization = config_getCoinJoinAuthorization();
+    if (authorization == NULL) {
+      return;
+    }
+    authorization_type = 0;
+  } else {
+    CHECK_PIN
+  }
 
   const CoinInfo *coin = fsm_getCoin(msg->has_coin_name, msg->coin_name);
   if (!coin) return;
@@ -150,11 +159,13 @@ void fsm_msgSignTx(const SignTx *msg) {
   const HDNode *node = fsm_getDerivedNode(coin->curve_name, NULL, 0, NULL);
   if (!node) return;
 
-  signing_init(msg, coin, node);
+  signing_init(msg, coin, node, authorization);
 }
 
 void fsm_msgTxAck(TxAck *msg) {
-  CHECK_UNLOCKED
+  if (!signing_preauthorized()) {
+    CHECK_UNLOCKED
+  }
 
   CHECK_PARAM(msg->has_tx, _("No transaction provided"));
 
@@ -728,5 +739,24 @@ void fsm_msgCancelAuthorization(const CancelAuthorization *msg) {
   }
 
   fsm_sendSuccess(_("Authorization cancelled"));
+  layoutHome();
+}
+
+void fsm_msgDoPreauthorized(const DoPreauthorized *msg) {
+  (void)msg;
+
+  RESP_INIT(PreauthorizedRequest);
+
+  CHECK_INITIALIZED
+
+  authorization_type = config_getAuthorizationType();
+  if (authorization_type == 0) {
+    fsm_sendFailure(FailureType_Failure_ProcessError,
+                    _("No preauthorized operation"));
+    layoutHome();
+    return;
+  }
+
+  msg_write(MessageType_MessageType_PreauthorizedRequest, resp);
   layoutHome();
 }

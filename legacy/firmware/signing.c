@@ -103,7 +103,7 @@ static uint64_t total_in, external_in, total_out, change_out;
 static uint64_t orig_total_in, orig_external_in, orig_total_out,
     orig_change_out;
 static uint32_t progress, progress_step, progress_meta_step;
-static uint32_t tx_weight;
+static uint32_t tx_weight, tx_base_weight, our_weight, our_inputs_len;
 
 typedef struct {
   uint32_t inputs_count;
@@ -147,6 +147,13 @@ static TxInfo info;
 static bool is_replacement;  // Is this a replacement transaction?
 static TxInfo orig_info;
 static uint8_t orig_hash[32];  // TXID of the original transaction.
+
+/* Variables specific to CoinJoin transactions. */
+static bool is_coinjoin;  // Is this a CoinJoin transaction?
+uint64_t coinjoin_coordination_fee_base;
+static AuthorizeCoinJoin coinjoin_authorization;
+static CoinJoinRequest coinjoin_request;
+static Hasher coinjoin_request_hasher;
 
 /* A marker for in_address_n_count to indicate a mismatch in bip32 paths in
    input */
@@ -648,6 +655,12 @@ void phase1_request_next_input(void) {
       idx2 = 0;
     }
 
+    if (to.is_segwit) {
+      tx_base_weight += TXSIZE_SEGWIT_OVERHEAD;
+      tx_weight += TXSIZE_SEGWIT_OVERHEAD + to.inputs_len;
+      our_weight += TXSIZE_SEGWIT_OVERHEAD + our_inputs_len;
+    }
+
     send_req_2_output();
   }
 }
@@ -1085,8 +1098,8 @@ static bool tx_info_init(TxInfo *tx_info, uint32_t inputs_count,
   return true;
 }
 
-void signing_init(const SignTx *msg, const CoinInfo *_coin,
-                  const HDNode *_root) {
+void signing_init(const SignTx *msg, const CoinInfo *_coin, const HDNode *_root,
+                  const AuthorizeCoinJoin *authorization) {
   coin = _coin;
   amount_unit = msg->has_amount_unit ? msg->amount_unit : AmountUnit_BITCOIN;
   serialize = msg->has_serialize ? msg->serialize : true;
@@ -1116,7 +1129,10 @@ void signing_init(const SignTx *msg, const CoinInfo *_coin,
   }
 #endif
 
-  tx_weight = 4 * size;
+  tx_base_weight = 4 * size;
+  tx_weight = tx_base_weight;
+  our_weight = tx_base_weight;
+  our_inputs_len = 0;
 
   foreign_address_confirmed = false;
   taproot_only = true;
@@ -1142,6 +1158,50 @@ void signing_init(const SignTx *msg, const CoinInfo *_coin,
   // we step by 500/inputs_count per input in phase1 and phase2
   // this means 50 % per phase.
   progress_step = (500 << PROGRESS_PRECISION) / info.inputs_count;
+
+  coinjoin_coordination_fee_base = 0;
+  is_coinjoin = (authorization != NULL);
+  if (is_coinjoin) {
+    if (!msg->has_coinjoin_request) {
+      fsm_sendFailure(FailureType_Failure_DataError,
+                      _("Missing CoinJoin request."));
+      signing_abort();
+      return;
+    }
+
+    if (strcmp(coin->coin_name, authorization->coin_name) != 0) {
+      fsm_sendFailure(FailureType_Failure_ProcessError,
+                      _("Unauthorized operation."));
+    }
+
+    memcpy(&coinjoin_authorization, authorization,
+           sizeof(coinjoin_authorization));
+    memcpy(&coinjoin_request, &msg->coinjoin_request, sizeof(coinjoin_request));
+
+    // Begin hashing the CoinJoin request.
+    hasher_Init(&coinjoin_request_hasher, HASHER_SHA2);
+    hasher_Update(&coinjoin_request_hasher, (const uint8_t *)"CJR1",
+                  4);  // "CJR1" = CoinJoin Request v1.
+    tx_script_hash(
+        &coinjoin_request_hasher,
+        strnlen(authorization->coordinator, sizeof(authorization->coordinator)),
+        (const uint8_t *)authorization->coordinator);
+    uint32_t slip44 = coin->coin_type & PATH_UNHARDEN_MASK;
+    hasher_Update(&coinjoin_request_hasher, (uint8_t *)&slip44, sizeof(slip44));
+    hasher_Update(&coinjoin_request_hasher,
+                  (const uint8_t *)&coinjoin_request.fee_rate, 4);
+    hasher_Update(&coinjoin_request_hasher,
+                  (const uint8_t *)&coinjoin_request.no_fee_threshold, 8);
+    hasher_Update(&coinjoin_request_hasher,
+                  (const uint8_t *)&coinjoin_request.min_registrable_amount, 8);
+    hasher_Update(&coinjoin_request_hasher,
+                  coinjoin_request.mask_public_key.bytes, 33);
+    ser_length_hash(&coinjoin_request_hasher, msg->inputs_count);
+  } else {
+    memzero(&coinjoin_authorization, sizeof(coinjoin_authorization));
+    memzero(&coinjoin_request, sizeof(coinjoin_request));
+    memzero(&coinjoin_request_hasher, sizeof(coinjoin_request_hasher));
+  }
 
   uint32_t branch_id = 0;
 #if !BITCOIN_ONLY
@@ -1514,6 +1574,22 @@ static bool tx_info_check_outputs_hash(TxInfo *tx_info) {
   return true;
 }
 
+static bool coinjoin_check_input(const TxInputType *txinput) {
+  // Check whether the current input matches the parameters of the request.
+  if (txinput->address_n_count < BIP32_WALLET_DEPTH ||
+      coinjoin_authorization.address_n_count !=
+          txinput->address_n_count - BIP32_WALLET_DEPTH ||
+      memcmp(txinput->address_n, coinjoin_authorization.address_n,
+             coinjoin_authorization.address_n_count * sizeof(uint32_t)) != 0 ||
+      strcmp(coin->coin_name, coinjoin_authorization.coin_name) != 0 ||
+      txinput->script_type != coinjoin_authorization.script_type) {
+    fsm_sendFailure(FailureType_Failure_ProcessError, _("Unauthorized path"));
+    signing_abort();
+    return false;
+  }
+  return true;
+}
+
 static bool signing_add_input(TxInputType *txinput) {
   // hash all input data to check it later (relevant for fee computation)
   if (!tx_input_check_hash(&info.hasher_check, txinput)) {
@@ -1553,6 +1629,71 @@ static bool signing_add_input(TxInputType *txinput) {
   // Add input to BIP-143/BIP-341 computation.
   if (!tx_info_add_input(&info, txinput)) {
     return false;
+  }
+
+  if (is_coinjoin) {
+    hasher_Update(&coinjoin_request_hasher, (uint8_t *)&txinput->coinjoin_flags,
+                  1);
+    if (is_internal_input_script_type(txinput->script_type)) {
+      // Masks for the signable and no_fee bits in coinjoin_flags.
+      const uint8_t COINJOIN_FLAGS_SIGNABLE = 0x01;
+      const uint8_t COINJOIN_FLAGS_NO_FEE = 0x02;
+
+      if (!coinjoin_check_input(txinput)) {
+        return false;
+      }
+
+      // Compute the masking bit for the signable bit in coinjoin flags.
+
+      // TODO refactor to reuse node from fill_input_script_pubkey()
+      static CONFIDENTIAL uint8_t output_private_key[32] = {0};
+      memcpy(&node, &root, sizeof(HDNode));
+      bool res =
+          (hdnode_private_ckd_cached(&node, txinput->address_n,
+                                     txinput->address_n_count, NULL) == 1);
+      res = res && (zkp_bip340_tweak_private_key(node.private_key, NULL,
+                                                 output_private_key) == 0);
+      memzero(&node, sizeof(node));
+
+      uint8_t shared_secret[65] = {0};
+      res = res && (ecdh_multiply(&secp256k1, output_private_key,
+                                  coinjoin_request.mask_public_key.bytes,
+                                  shared_secret) == 0);
+      memzero(&output_private_key, sizeof(output_private_key));
+
+      if (!res) {
+        fsm_sendFailure(FailureType_Failure_ProcessError,
+                        _("Failed to derive shared secret."));
+        signing_abort();
+        return false;
+      }
+
+      Hasher mask_hasher = {0};
+      uint8_t mask[SHA256_DIGEST_LENGTH] = {0};
+      hasher_Init(&mask_hasher, HASHER_SHA2);
+      hasher_Update(&mask_hasher, shared_secret + 1, 32);
+      tx_prevout_hash(&mask_hasher, txinput);
+      hasher_Final(&mask_hasher, mask);
+
+      // Ensure that the input can be signed.
+      bool signable =
+          (txinput->coinjoin_flags ^ mask[0]) & COINJOIN_FLAGS_SIGNABLE;
+      if (!signable) {
+        fsm_sendFailure(FailureType_Failure_ProcessError,
+                        _("Unauthorized input"));
+        signing_abort();
+        return false;
+      }
+
+      // Add to coordination_fee_base, except for remixes and small inputs which
+      // are not charged a coordination fee.
+      bool no_fee = txinput->coinjoin_flags & COINJOIN_FLAGS_NO_FEE;
+      if (txinput->amount > coinjoin_request.no_fee_threshold && !no_fee) {
+        if (!add_amount(&coinjoin_coordination_fee_base, txinput->amount)) {
+          return false;
+        }
+      }
+    }
   }
 
 #if !BITCOIN_ONLY
@@ -1643,6 +1784,12 @@ static bool signing_add_output(TxOutputType *txoutput) {
 
   bool is_change = is_change_output(&info, txoutput);
 
+  uint32_t output_weight = tx_output_weight(coin, txoutput);
+  tx_weight += output_weight;
+  if (is_change) {
+    our_weight += output_weight;
+  }
+
   // Don't allow adding new external outputs in replacement transactions. There
   // is actually nothing wrong with adding new external outputs, but the only
   // way to pay for them would be by supplying a new (verified) external input,
@@ -1676,7 +1823,7 @@ static bool signing_add_output(TxOutputType *txoutput) {
 
   // Skip confirmation of change-outputs and skip output confirmation altogether
   // in replacement transactions.
-  bool skip_confirm = is_change || is_replacement;
+  bool skip_confirm = is_change || is_replacement || is_coinjoin;
   int co = compile_output(coin, amount_unit, &root, txoutput, &bin_output,
                           !skip_confirm);
   if (!skip_confirm) {
@@ -1928,7 +2075,7 @@ static bool signing_add_orig_output(TxOutputType *orig_output) {
   return true;
 }
 
-static bool signing_confirm_tx(void) {
+static bool payment_confirm_tx(void) {
   if (has_unverified_external_input) {
     layoutConfirmUnverifiedExternalInputs();
     if (!protectButton(ButtonRequestType_ButtonRequest_SignTx, false)) {
@@ -2058,6 +2205,126 @@ static bool signing_confirm_tx(void) {
   }
 
   return true;
+}
+
+static bool coinjoin_confirm_tx(void) {
+  // Minimum registrable output amount accepted by the CoinJoin coordinator. The
+  // CoinJoin request may specify an even lower amount.
+  const uint64_t MIN_REGISTRABLE_OUTPUT_AMOUNT = 5000;
+
+  // Largest possible weight of an output supported by Trezor (P2TR or P2WSH).
+  const uint64_t MAX_OUTPUT_WEIGHT = 4 * (8 + 1 + 1 + 1 + 32);
+
+  // Public keys for CoinJoin request signatures.
+  const uint8_t COINJOIN_REQ_PUBKEY[] = {
+      0x02, 0x57, 0x03, 0xbb, 0xe1, 0x5b, 0xb0, 0x8e, 0x98, 0x21, 0xfe,
+      0x64, 0xaf, 0xf6, 0xb2, 0xef, 0x1a, 0x31, 0x60, 0xe3, 0x79, 0x9d,
+      0xd8, 0xf0, 0xce, 0xbf, 0x2c, 0x79, 0xe8, 0x67, 0xdd, 0x12, 0x5d};
+#if DEBUG_LINK
+  // secp256k1 public key of m/0h for "all all ... all" seed.
+  const uint8_t COINJOIN_REQ_PUBKEY_DEBUG[] = {
+      0x03, 0x0f, 0xdf, 0x5e, 0x28, 0x9b, 0x5a, 0xef, 0x53, 0x62, 0x90,
+      0x95, 0x3a, 0xe8, 0x1c, 0xe6, 0x0e, 0x84, 0x1f, 0xf9, 0x56, 0xf3,
+      0x66, 0xac, 0x12, 0x3f, 0xa6, 0x9d, 0xb3, 0xc7, 0x9f, 0x21, 0xb0};
+#endif
+
+  // Finish hashing the CoinJoin request.
+  hasher_Update(&coinjoin_request_hasher, info.hash_prevouts,
+                sizeof(info.hash_prevouts));
+  hasher_Update(&coinjoin_request_hasher, info.hash_outputs,
+                sizeof(info.hash_outputs));
+
+  // Verify the CoinJoin request signature.
+  uint8_t coinjoin_request_digest[SHA256_DIGEST_LENGTH] = {0};
+  hasher_Final(&coinjoin_request_hasher, coinjoin_request_digest);
+#if DEBUG_LINK
+  if (ecdsa_verify_digest(&secp256k1, COINJOIN_REQ_PUBKEY_DEBUG,
+                          coinjoin_request.signature.bytes,
+                          coinjoin_request_digest) == 0) {
+    // success
+  } else
+#endif
+      if (ecdsa_verify_digest(&secp256k1, COINJOIN_REQ_PUBKEY,
+                              coinjoin_request.signature.bytes,
+                              coinjoin_request_digest) == 0) {
+    // success
+  } else {
+    fsm_sendFailure(FailureType_Failure_DataError,
+                    _("Invalid signature in CoinJoin request."));
+    signing_abort();
+    return false;
+  }
+
+  if (has_unverified_external_input) {
+    fsm_sendFailure(FailureType_Failure_ProcessError,
+                    _("Unverifiable external input."));
+    signing_abort();
+    return false;
+  }
+
+  uint64_t mining_fee = 0;
+  if (total_out <= total_in) {
+    mining_fee = total_in - total_out;
+  }
+
+  // The maximum mining fee that the user should be paying.
+  uint64_t our_max_mining_fee =
+      coinjoin_authorization.max_fee_per_kvbyte * ((our_weight + 3) / 4) / 1000;
+
+  // The coordination fee for the user's inputs.
+  uint64_t our_coordination_fee =
+      MIN(coinjoin_request.fee_rate,
+          coinjoin_authorization.max_coordinator_fee_rate) *
+      coinjoin_coordination_fee_base / FEE_RATE_DECIMALS / 100;
+
+  // Total fees that the user is paying.
+  uint64_t our_fees = 0;
+  if (change_out <= total_in - external_in) {
+    our_fees = total_in - external_in - change_out;
+  }
+
+  // For the next step we need to estimate an upper bound on the mining fee used
+  // by the coordinator. The coordinator does not include the base weight of the
+  // transaction when computing the mining fee, so we take this into account.
+  uint64_t max_fee_per_output =
+      MAX_OUTPUT_WEIGHT * mining_fee / (tx_weight - tx_base_weight);
+
+  // Calculate the minimum registrable output amount in a CoinJoin plus the
+  // mining fee that it would cost to register. Amounts below this value are
+  // left to the coordinator or miners and effectively constitute an extra fee
+  // for the user.
+  uint64_t min_allowed_output_amount_plus_fee =
+      MIN(coinjoin_request.min_registrable_amount,
+          MIN_REGISTRABLE_OUTPUT_AMOUNT) +
+      max_fee_per_output;
+
+  if (our_fees > our_coordination_fee + our_max_mining_fee +
+                     min_allowed_output_amount_plus_fee) {
+    fsm_sendFailure(FailureType_Failure_ProcessError,
+                    _("Total fee over threshold."));
+    signing_abort();
+    return false;
+  }
+
+  if (coinjoin_authorization.max_rounds < 1) {
+    fsm_sendFailure(FailureType_Failure_ProcessError,
+                    _("Exceeded number of CoinJoin rounds."));
+    signing_abort();
+    return false;
+  }
+
+  coinjoin_authorization.max_rounds -= 1;
+  config_setCoinJoinAuthorization(&coinjoin_authorization);
+
+  return true;
+}
+
+static bool signing_confirm_tx(void) {
+  if (is_coinjoin) {
+    return coinjoin_confirm_tx();
+  } else {
+    return payment_confirm_tx();
+  }
 }
 
 static uint32_t signing_hash_type(const TxInputType *txinput) {
@@ -2965,12 +3232,17 @@ void signing_txack(TransactionType *tx) {
         return;
       }
 
-      tx_weight += tx_input_weight(coin, &tx->inputs[0]);
+      uint32_t input_weight = tx_input_weight(coin, &tx->inputs[0]);
 #if !BITCOIN_ONLY
       if (coin->decred) {
-        tx_weight += tx_decred_witness_weight(&tx->inputs[0]);
+        input_weight += tx_decred_witness_weight(&tx->inputs[0]);
       }
 #endif
+      tx_weight += input_weight;
+      if (is_internal_input_script_type(tx->inputs[0].script_type)) {
+        our_weight += input_weight;
+        our_inputs_len += 1;
+      }
 
       if (tx->inputs[0].script_type != InputScriptType_SPENDTAPROOT &&
           tx->inputs[0].script_type != InputScriptType_EXTERNAL) {
@@ -2998,9 +3270,6 @@ void signing_txack(TransactionType *tx) {
           }
         }
       } else if (is_segwit_input_script_type(tx->inputs[0].script_type)) {
-        if (!to.is_segwit) {
-          tx_weight += TXSIZE_SEGWIT_OVERHEAD + to.inputs_len;
-        }
 #if !ENABLE_SEGWIT_NONSEGWIT_MIXING
         // don't mix segwit and non-segwit inputs
         if (idx1 == 0) {
@@ -3112,7 +3381,6 @@ void signing_txack(TransactionType *tx) {
           !signing_add_output(&tx->outputs[0])) {
         return;
       }
-      tx_weight += tx_output_weight(coin, &tx->outputs[0]);
 
       if (tx->outputs[0].has_orig_hash) {
         memcpy(&output, &tx->outputs[0], sizeof(output));
@@ -3772,3 +4040,5 @@ void signing_abort(void) {
   memzero(&root, sizeof(root));
   memzero(&node, sizeof(node));
 }
+
+bool signing_preauthorized(void) { return signing && is_coinjoin; }
