@@ -32,6 +32,9 @@
 // CoinJoin fee rate multiplier.
 #define FEE_RATE_DECIMALS (1000000)
 
+// The number of bip32 levels used in a wallet (chain and address)
+#define BIP32_WALLET_DEPTH 2
+
 // message functions
 
 void fsm_sendSuccess(const char *text);
