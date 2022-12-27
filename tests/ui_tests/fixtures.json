@@ -1,5 +1,6 @@
 {
 "T1_bitcoin-test_authorize_coinjoin.py::test_cancel_authorization": "60e18060db1756fd0199dd381b41c4b20da89ed1acfe3e1378e2f511d97732bf",
+"T1_bitcoin-test_authorize_coinjoin.py::test_get_public_key": "9b3c916759b79048a4ab3e3fe8ce0ea0cf8d4ae6cfb66a5d712f21edfdb01782",
 "T1_bitcoin-test_authorize_coinjoin.py::test_multisession_authorization": "d2ac218c6bc361f732a65daee2ae7183ca935a7b246545ebe6346dbd33d0a702",
 "T1_bitcoin-test_authorize_coinjoin.py::test_sign_tx": "f630f414daeeb8e0aa3d01ed38a512cb9bfb83abd0c022e01dd02d6824ade61d",
 "T1_bitcoin-test_authorize_coinjoin.py::test_sign_tx_large": "4365228d89327c72b2d0fa4d487fb28c19ed832e94d8c0c71db83b060c06074a",
