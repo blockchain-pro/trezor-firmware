@@ -1059,6 +1059,19 @@ static bool fill_input_script_sig(TxInputType *tinput) {
   return true;
 }
 
+static bool fill_input_script_pubkey(TxInputType *in) {
+  if (!get_script_pubkey(coin, &node, in->has_multisig, &in->multisig,
+                         in->script_type, in->script_pubkey.bytes,
+                         &in->script_pubkey.size)) {
+    fsm_sendFailure(FailureType_Failure_ProcessError,
+                    _("Failed to derive scriptPubKey"));
+    signing_abort();
+    return false;
+  }
+  in->has_script_pubkey = true;
+  return true;
+}
+
 static bool derive_node(TxInputType *tinput) {
   if (!coin_path_check(coin, tinput->script_type, tinput->address_n_count,
                        tinput->address_n, tinput->has_multisig, false) &&
@@ -1075,10 +1088,18 @@ static bool derive_node(TxInputType *tinput) {
   if (!foreign_address_confirmed &&
       !coin_path_check(coin, tinput->script_type, tinput->address_n_count,
                        tinput->address_n, tinput->has_multisig, true)) {
-    fsm_sendFailure(FailureType_Failure_ProcessError,
-                    _("Transaction has changed during signing"));
-    signing_abort();
-    return false;
+    if (signing_stage < STAGE_REQUEST_3_INPUT) {
+      if (!fsm_layoutPathWarning()) {
+        signing_abort();
+        return false;
+      }
+      foreign_address_confirmed = true;
+    } else {
+      fsm_sendFailure(FailureType_Failure_ProcessError,
+                      _("Transaction has changed during signing"));
+      signing_abort();
+      return false;
+    }
   }
 
   memcpy(&node, &root, sizeof(HDNode));
@@ -1738,31 +1759,11 @@ static bool signing_add_input(TxInputType *txinput) {
     return false;
   }
 
-  if (txinput->script_type != InputScriptType_EXTERNAL &&
-      !coin_path_check(coin, txinput->script_type, txinput->address_n_count,
-                       txinput->address_n, txinput->has_multisig, true)) {
-    if (config_getSafetyCheckLevel() == SafetyCheckLevel_Strict &&
-        !coin_path_check(coin, txinput->script_type, txinput->address_n_count,
-                         txinput->address_n, txinput->has_multisig, false)) {
-      fsm_sendFailure(FailureType_Failure_DataError, _("Forbidden key path"));
-      signing_abort();
+  if (txinput->script_type != InputScriptType_EXTERNAL) {
+    // External inputs should have scriptPubKey set by the host.
+    if (!derive_node(txinput) || !fill_input_script_pubkey(txinput)) {
       return false;
     }
-
-    if (!foreign_address_confirmed) {
-      if (!fsm_layoutPathWarning()) {
-        signing_abort();
-        return false;
-      }
-      foreign_address_confirmed = true;
-    }
-  }
-
-  if (!fill_input_script_pubkey(coin, &root, txinput)) {
-    fsm_sendFailure(FailureType_Failure_ProcessError,
-                    _("Failed to derive scriptPubKey"));
-    signing_abort();
-    return false;
   }
 
   // Add input to BIP-143/BIP-341 computation.
@@ -1783,23 +1784,14 @@ static bool signing_add_input(TxInputType *txinput) {
       }
 
       // Compute the masking bit for the signable bit in coinjoin flags.
-
-      // TODO refactor to reuse node from fill_input_script_pubkey()
       static CONFIDENTIAL uint8_t output_private_key[32] = {0};
-      memcpy(&node, &root, sizeof(HDNode));
-      bool res =
-          (hdnode_private_ckd_cached(&node, txinput->address_n,
-                                     txinput->address_n_count, NULL) == 1);
-      res = res && (zkp_bip340_tweak_private_key(node.private_key, NULL,
-                                                 output_private_key) == 0);
-      memzero(&node, sizeof(node));
-
       uint8_t shared_secret[65] = {0};
+      bool res = (zkp_bip340_tweak_private_key(node.private_key, NULL,
+                                               output_private_key) == 0);
       res = res && (ecdh_multiply(&secp256k1, output_private_key,
                                   coinjoin_request.mask_public_key.bytes,
                                   shared_secret) == 0);
       memzero(&output_private_key, sizeof(output_private_key));
-
       if (!res) {
         fsm_sendFailure(FailureType_Failure_ProcessError,
                         _("Failed to derive shared secret."));
@@ -1832,6 +1824,9 @@ static bool signing_add_input(TxInputType *txinput) {
           return false;
         }
       }
+
+      // Since this took a longer time, update progress.
+      report_progress(true);
     }
   }
 
@@ -2053,11 +2048,11 @@ static bool signing_add_orig_input(TxInputType *orig_input) {
     return false;
   }
 
-  if (!fill_input_script_pubkey(coin, &root, orig_input)) {
-    fsm_sendFailure(FailureType_Failure_ProcessError,
-                    _("Failed to derive scriptPubKey"));
-    signing_abort();
-    return false;
+  if (orig_input->script_type != InputScriptType_EXTERNAL) {
+    // External inputs should have scriptPubKey set by the host.
+    if (!derive_node(orig_input) || !fill_input_script_pubkey(orig_input)) {
+      return false;
+    }
   }
 
   // Verify that the original input matches the current input.
@@ -3599,11 +3594,11 @@ void signing_txack(TransactionType *tx) {
 
       memcpy(&input, tx->inputs, sizeof(TxInputType));
 
-      if (!fill_input_script_pubkey(coin, &root, &input)) {
-        fsm_sendFailure(FailureType_Failure_ProcessError,
-                        _("Failed to derive scriptPubKey"));
-        signing_abort();
-        return;
+      if (input.script_type != InputScriptType_EXTERNAL) {
+        // External inputs should have scriptPubKey set by the host.
+        if (!derive_node(&input) || !fill_input_script_pubkey(&input)) {
+          return;
+        }
       }
 
       send_req_3_prev_meta();
@@ -3995,10 +3990,7 @@ void signing_txack(TransactionType *tx) {
           if (info.version == 4) {
             signing_hash_zip243(&info, &tx->inputs[0], hash);
           } else if (info.version == 5) {
-            if (!fill_input_script_pubkey(coin, &root, &tx->inputs[0])) {
-              fsm_sendFailure(FailureType_Failure_ProcessError,
-                              _("Failed to derive scriptPubKey"));
-              signing_abort();
+            if (!fill_input_script_pubkey(&tx->inputs[0])) {
               return;
             }
             signing_hash_zip244(&info, &tx->inputs[0], hash);
