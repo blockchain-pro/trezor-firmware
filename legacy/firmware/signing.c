@@ -110,6 +110,7 @@ static uint32_t progress_step, progress_steps, progress_substep,
     progress_substeps, progress_midpoint, progress_update;
 static const char *progress_label;
 static uint32_t tx_weight, tx_base_weight, our_weight, our_inputs_len;
+PathSchema unlocked_schema;
 
 typedef struct {
   uint32_t inputs_count;
@@ -1074,7 +1075,8 @@ static bool fill_input_script_pubkey(TxInputType *in) {
 
 static bool derive_node(TxInputType *tinput) {
   if (!coin_path_check(coin, tinput->script_type, tinput->address_n_count,
-                       tinput->address_n, tinput->has_multisig, false) &&
+                       tinput->address_n, tinput->has_multisig, unlocked_schema,
+                       false) &&
       config_getSafetyCheckLevel() == SafetyCheckLevel_Strict) {
     fsm_sendFailure(FailureType_Failure_DataError, _("Forbidden key path"));
     signing_abort();
@@ -1087,7 +1089,8 @@ static bool derive_node(TxInputType *tinput) {
   // through a warning screen before we sign the input.
   if (!foreign_address_confirmed &&
       !coin_path_check(coin, tinput->script_type, tinput->address_n_count,
-                       tinput->address_n, tinput->has_multisig, true)) {
+                       tinput->address_n, tinput->has_multisig, unlocked_schema,
+                       true)) {
     if (signing_stage < STAGE_REQUEST_3_INPUT) {
       if (!fsm_layoutPathWarning()) {
         signing_abort();
@@ -1260,7 +1263,7 @@ static bool tx_info_init(TxInfo *tx_info, uint32_t inputs_count,
 }
 
 void signing_init(const SignTx *msg, const CoinInfo *_coin, const HDNode *_root,
-                  const AuthorizeCoinJoin *authorization) {
+                  const AuthorizeCoinJoin *authorization, PathSchema unlock) {
   coin = _coin;
   amount_unit = msg->has_amount_unit ? msg->amount_unit : AmountUnit_BITCOIN;
   serialize = msg->has_serialize ? msg->serialize : true;
@@ -1314,7 +1317,9 @@ void signing_init(const SignTx *msg, const CoinInfo *_coin, const HDNode *_root,
   memzero(&output, sizeof(TxOutputType));
   memzero(&resp, sizeof(TxRequest));
   is_replacement = false;
+  unlocked_schema = unlock;
   signing = true;
+
   coinjoin_coordination_fee_base = 0;
   is_coinjoin = (authorization != NULL);
   if (is_coinjoin) {
