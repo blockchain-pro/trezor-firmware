@@ -43,7 +43,6 @@ void fsm_msgGetPublicKey(const GetPublicKey *msg) {
       layoutHome();
       return;
     }
-    unlock_path = 0;
   }
 
   // derive m/0' to obtain root_fingerprint
@@ -175,7 +174,6 @@ void fsm_msgSignTx(const SignTx *msg) {
     if (authorization == NULL) {
       return;
     }
-    authorization_type = 0;
   } else {
     CHECK_PIN
   }
@@ -521,7 +519,6 @@ void fsm_msgGetOwnershipProof(const GetOwnershipProof *msg) {
     if (authorization == NULL) {
       return;
     }
-    authorization_type = 0;
   } else {
     CHECK_PIN
   }

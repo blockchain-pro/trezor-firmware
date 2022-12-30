@@ -411,10 +411,21 @@ void fsm_abortWorkflows(void) {
   recovery_abort();
   signing_abort();
   authorization_type = 0;
+  unlock_path = 0;
 #if !BITCOIN_ONLY
   ethereum_signing_abort();
   stellar_signingAbort();
 #endif
+}
+
+void fsm_postMsgCleanup(MessageType message_type) {
+  if (message_type != MessageType_MessageType_DoPreauthorized) {
+    authorization_type = 0;
+  }
+
+  if (message_type != MessageType_MessageType_UnlockPath) {
+    unlock_path = 0;
+  }
 }
 
 bool fsm_layoutPathWarning(void) {
