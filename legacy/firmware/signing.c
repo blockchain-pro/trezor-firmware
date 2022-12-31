@@ -1074,34 +1074,50 @@ static bool fill_input_script_pubkey(TxInputType *in) {
 }
 
 static bool derive_node(TxInputType *tinput) {
-  if (!coin_path_check(coin, tinput->script_type, tinput->address_n_count,
-                       tinput->address_n, tinput->has_multisig, unlocked_schema,
-                       false) &&
-      config_getSafetyCheckLevel() == SafetyCheckLevel_Strict) {
-    fsm_sendFailure(FailureType_Failure_DataError, _("Forbidden key path"));
-    signing_abort();
-    return false;
-  }
+  if (is_coinjoin) {
+    // Check whether the authorization matches the parameters of the input.
+    if (tinput->address_n_count < BIP32_WALLET_DEPTH ||
+        tinput->address_n_count - BIP32_WALLET_DEPTH !=
+            coinjoin_authorization.address_n_count ||
+        memcmp(tinput->address_n, coinjoin_authorization.address_n,
+               sizeof(uint32_t) * coinjoin_authorization.address_n_count) !=
+            0 ||
+        tinput->script_type != coinjoin_authorization.script_type) {
+      fsm_sendFailure(FailureType_Failure_ProcessError,
+                      _("Unauthorized operation"));
+      signing_abort();
+      return false;
+    }
+  } else {
+    if (!coin_path_check(coin, tinput->script_type, tinput->address_n_count,
+                         tinput->address_n, tinput->has_multisig,
+                         unlocked_schema, false) &&
+        config_getSafetyCheckLevel() == SafetyCheckLevel_Strict) {
+      fsm_sendFailure(FailureType_Failure_DataError, _("Forbidden key path"));
+      signing_abort();
+      return false;
+    }
 
-  // Sanity check not critical for security. The main reason for this is that we
-  // are not comfortable with using the same private key in multiple signature
-  // schemes (ECDSA and Schnorr) and we want to be sure that the user went
-  // through a warning screen before we sign the input.
-  if (!foreign_address_confirmed &&
-      !coin_path_check(coin, tinput->script_type, tinput->address_n_count,
-                       tinput->address_n, tinput->has_multisig, unlocked_schema,
-                       true)) {
-    if (signing_stage < STAGE_REQUEST_3_INPUT) {
-      if (!fsm_layoutPathWarning()) {
+    // Sanity check not critical for security. The main reason for this is that
+    // we are not comfortable with using the same private key in multiple
+    // signature schemes (ECDSA and Schnorr) and we want to be sure that the
+    // user went through a warning screen before we sign the input.
+    if (!foreign_address_confirmed &&
+        !coin_path_check(coin, tinput->script_type, tinput->address_n_count,
+                         tinput->address_n, tinput->has_multisig,
+                         unlocked_schema, true)) {
+      if (signing_stage < STAGE_REQUEST_3_INPUT) {
+        if (!fsm_layoutPathWarning()) {
+          signing_abort();
+          return false;
+        }
+        foreign_address_confirmed = true;
+      } else {
+        fsm_sendFailure(FailureType_Failure_ProcessError,
+                        _("Transaction has changed during signing"));
         signing_abort();
         return false;
       }
-      foreign_address_confirmed = true;
-    } else {
-      fsm_sendFailure(FailureType_Failure_ProcessError,
-                      _("Transaction has changed during signing"));
-      signing_abort();
-      return false;
     }
   }
 

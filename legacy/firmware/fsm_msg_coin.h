@@ -513,14 +513,42 @@ void fsm_msgGetOwnershipProof(const GetOwnershipProof *msg) {
 
   CHECK_INITIALIZED
 
+  const CoinInfo *coin = fsm_getCoin(msg->has_coin_name, msg->coin_name);
+  if (!coin) return;
+
   const AuthorizeCoinJoin *authorization = NULL;
   if (authorization_type == MessageType_MessageType_AuthorizeCoinJoin) {
     authorization = config_getCoinJoinAuthorization();
     if (authorization == NULL) {
       return;
     }
+
+    // Check whether the authorization matches the parameters of the request.
+    size_t coordinator_len = strlen(authorization->coordinator);
+    if (msg->address_n_count < BIP32_WALLET_DEPTH ||
+        msg->address_n_count - BIP32_WALLET_DEPTH !=
+            authorization->address_n_count ||
+        memcmp(msg->address_n, authorization->address_n,
+               sizeof(uint32_t) * authorization->address_n_count) != 0 ||
+        strcmp(msg->coin_name, authorization->coin_name) != 0 ||
+        msg->script_type != authorization->script_type ||
+        msg->commitment_data.size < coordinator_len + 1 ||
+        msg->commitment_data.bytes[0] != coordinator_len ||
+        memcmp(msg->commitment_data.bytes + 1, authorization->coordinator,
+               coordinator_len) != 0) {
+      fsm_sendFailure(FailureType_Failure_ProcessError,
+                      _("Unauthorized operation"));
+      layoutHome();
+      return;
+    }
   } else {
     CHECK_PIN
+    if (!fsm_checkCoinPath(coin, msg->script_type, msg->address_n_count,
+                           msg->address_n, msg->has_multisig,
+                           MessageType_MessageType_GetOwnershipProof, false)) {
+      layoutHome();
+      return;
+    }
   }
 
   if (msg->has_multisig) {
@@ -528,16 +556,6 @@ void fsm_msgGetOwnershipProof(const GetOwnershipProof *msg) {
     // v0 and v1, the bare minimum for CoinJoin.
     fsm_sendFailure(FailureType_Failure_DataError,
                     _("Multisig not supported."));
-    layoutHome();
-    return;
-  }
-
-  const CoinInfo *coin = fsm_getCoin(msg->has_coin_name, msg->coin_name);
-  if (!coin) return;
-
-  if (!fsm_checkCoinPath(coin, msg->script_type, msg->address_n_count,
-                         msg->address_n, msg->has_multisig,
-                         MessageType_MessageType_GetOwnershipProof, false)) {
     layoutHome();
     return;
   }
@@ -584,41 +602,20 @@ void fsm_msgGetOwnershipProof(const GetOwnershipProof *msg) {
   // In order to set the "user confirmation" bit in the proof, the user must
   // actually confirm.
   uint8_t flags = msg->user_confirmation;
-  if (authorization) {
-    // Check whether the authorization matches the parameters of the request.
-    size_t coordinator_len = strlen(authorization->coordinator);
-    if (msg->address_n_count < BIP32_WALLET_DEPTH ||
-        msg->address_n_count - BIP32_WALLET_DEPTH !=
-            authorization->address_n_count ||
-        memcmp(msg->address_n, authorization->address_n,
-               authorization->address_n_count) != 0 ||
-        strcmp(msg->coin_name, authorization->coin_name) != 0 ||
-        msg->script_type != authorization->script_type ||
-        msg->commitment_data.size < coordinator_len + 1 ||
-        msg->commitment_data.bytes[0] != coordinator_len ||
-        memcmp(msg->commitment_data.bytes + 1, authorization->coordinator,
-               coordinator_len) != 0) {
-      fsm_sendFailure(FailureType_Failure_ProcessError,
-                      _("Unauthorized operation"));
+  if (!authorization && msg->user_confirmation) {
+    layoutConfirmOwnershipProof();
+    if (!protectButton(ButtonRequestType_ButtonRequest_ProtectCall, false)) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
       layoutHome();
       return;
     }
-  } else {
-    if (msg->user_confirmation) {
-      layoutConfirmOwnershipProof();
-      if (!protectButton(ButtonRequestType_ButtonRequest_ProtectCall, false)) {
+
+    if (msg->has_commitment_data) {
+      if (!fsm_layoutCommitmentData(msg->commitment_data.bytes,
+                                    msg->commitment_data.size)) {
         fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
         layoutHome();
         return;
-      }
-
-      if (msg->has_commitment_data) {
-        if (!fsm_layoutCommitmentData(msg->commitment_data.bytes,
-                                      msg->commitment_data.size)) {
-          fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
-          layoutHome();
-          return;
-        }
       }
     }
   }
