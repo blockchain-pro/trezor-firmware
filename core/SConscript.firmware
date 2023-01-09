@@ -455,7 +455,7 @@ env.Replace(
 if TREZOR_MODEL in ('T', 'R'):
     CPU_ASFLAGS = '-mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16'
     CPU_CCFLAGS = '-mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -mtune=cortex-m4 '
-    CPU_MODEL   = 'STM32F427xx'
+    CPU_MODEL   = 'STM32F429xx'
     LD_VARIANT  = ''
     RUST_TARGET = 'thumbv7em-none-eabihf'
 elif TREZOR_MODEL in ('1',):

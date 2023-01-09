@@ -48,7 +48,7 @@
 /* Exported types ------------------------------------------------------------*/
 /* Exported constants --------------------------------------------------------*/
 
-#ifdef STM32F427xx
+#if defined(STM32F427xx) || defined(STM32F429xx)
 #define USE_USB_HS
 #define USE_USB_HS_IN_FS
 #elif STM32F405xx
