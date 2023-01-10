@@ -28,7 +28,7 @@ ADDRESS_SANITIZER ?= 0
 # OpenOCD interface default. Alternative: ftdi/olimex-arm-usb-tiny-h
 OPENOCD_INTERFACE ?= cmsis-dap
 # OpenOCD transport default. Alternative: jtag
-OPENOCD_TRANSPORT ?= hla_swd
+OPENOCD_TRANSPORT ?= swd
 OPENOCD = openocd -f interface/$(OPENOCD_INTERFACE).cfg -c "transport select $(OPENOCD_TRANSPORT)" -f target/stm32f4x.cfg
 OPENOCD_T1 = openocd -f interface/$(OPENOCD_INTERFACE).cfg -c "transport select $(OPENOCD_TRANSPORT)" -f target/stm32f2x.cfg
 

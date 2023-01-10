@@ -36,7 +36,7 @@ typedef struct {
 
 #if defined( STM32F427xx )  || defined( STM32F429xx)
 #ifdef TREZOR_MODEL_T
-#define DEFAULT_FREQ 168U
+#define DEFAULT_FREQ 180U
 #define DEFAULT_PLLQ 7U
 #define DEFAULT_PLLP 0U  // P = 2 (two bits, 00 means PLLP = 2)
 #define DEFAULT_PLLM 4U
@@ -97,7 +97,7 @@ clock_conf_t clock_conf[3] = {
 #pragma GCC optimize( \
     "no-stack-protector")  // applies to all functions in this file
 
-void SystemInit(void) {
+void #if defined( STM32F427xx )  || defined( STM32F429xx)(void) {
   // set flash wait states for an increasing HCLK frequency -- reference RM0090
   // section 3.5.1
   FLASH->ACR = FLASH_ACR_LATENCY_5WS;
