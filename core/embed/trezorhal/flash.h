@@ -82,7 +82,7 @@ extern const uint8_t FIRMWARE_SECTORS[FIRMWARE_SECTORS_COUNT];
 // note: FLASH_SR_RDERR is STM32F42xxx and STM32F43xxx specific (STM32F427)
 // (reference RM0090 section 3.7.5)
 #ifndef STM32F427xx
-//#define FLASH_SR_RDERR 0
+#define FLASH_SR_RDERR 0
 #endif
 
 #define FLASH_STATUS_ALL_FLAGS                                            \

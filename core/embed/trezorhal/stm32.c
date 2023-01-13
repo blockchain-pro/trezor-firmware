@@ -97,7 +97,7 @@ clock_conf_t clock_conf[3] = {
 #pragma GCC optimize( \
     "no-stack-protector")  // applies to all functions in this file
 
-void #if defined( STM32F427xx )  || defined( STM32F429xx)(void) {
+void SystemInit(void) {
   // set flash wait states for an increasing HCLK frequency -- reference RM0090
   // section 3.5.1
   FLASH->ACR = FLASH_ACR_LATENCY_5WS;
